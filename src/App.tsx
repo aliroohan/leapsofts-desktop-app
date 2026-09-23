@@ -204,8 +204,10 @@ export default function App(): JSX.Element {
               {source === "idle"
                 ? "Idle break"
                 : source === "sleep"
-                  ? "Sleep / offline"
-                  : "Manual break"}
+                  ? "Sleep"
+                  : source === "offline"
+                    ? "Offline break"
+                    : "Manual break"}
             </span>
           ) : (
             <span className="badge">{state.isOnline ? "Online" : "Offline"}</span>

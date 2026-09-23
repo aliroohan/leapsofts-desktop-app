@@ -169,7 +169,8 @@ pub async fn flush_pending_heartbeats(app: &AppHandle, stopping: bool) {
         if beats.is_empty() && !stopping {
             return;
         }
-        match api.send_heartbeat(&beats, stopping).await {
+        let last_batch = beats.len() < 500;
+        match api.send_heartbeat(&beats, stopping && last_batch).await {
             Ok(shift) => {
                 if !beats.is_empty() {
                     if let Ok(db) = api.db.lock() {
@@ -177,7 +178,7 @@ pub async fn flush_pending_heartbeats(app: &AppHandle, stopping: bool) {
                     }
                 }
                 apply_shift(app, Some(shift)).await;
-                if beats.len() < 500 {
+                if last_batch {
                     return;
                 }
             }
@@ -193,9 +194,6 @@ pub async fn flush_pending_heartbeats(app: &AppHandle, stopping: bool) {
                 }
                 return;
             }
-        }
-        if stopping {
-            return;
         }
     }
 }
@@ -311,6 +309,12 @@ pub async fn logout(app: &AppHandle) -> Result<(), String> {
 pub async fn user_check_in(app: &AppHandle) -> Result<(), String> {
     let shift = app.state::<Api>().check_in().await.map_err(|e| e.to_string())?;
     apply_shift(app, Some(shift)).await;
+    if let Some(api) = app.try_state::<Api>() {
+        if let Ok(db) = api.db.lock() {
+            queue::append_heartbeat(&db, &chrono::Utc::now().to_rfc3339());
+        }
+    }
+    flush_pending_heartbeats(app, false).await;
     Ok(())
 }
 

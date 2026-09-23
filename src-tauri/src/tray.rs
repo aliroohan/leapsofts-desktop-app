@@ -60,7 +60,11 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             "reload_erp" => reload_erp(app, false),
             "open_tracker" => show_window(app, "tracker"),
             "quit" => {
-                app.exit(0);
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::session::on_app_quit(&handle).await;
+                    handle.exit(0);
+                });
             }
             _ => {}
         })
