@@ -86,6 +86,11 @@ h1 {
   color: #c9a0ff;
 }
 
+.badge.offline {
+  background: #2a1433;
+  color: #c9a0ff;
+}
+
 .row {
   display: flex;
   gap: 8px;
