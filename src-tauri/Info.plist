@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Leapsofts ERP reads the frontmost window title for work-activity tracking while you are checked in.</string>
+  <key>NSAccessibilityUsageDescription</key>
+  <string>Leapsofts ERP needs Accessibility permission to measure keyboard and mouse activity and the active window while you are checked in.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Leapsofts ERP captures the screen you are working on while you are checked in, so activity samples show your open windows.</string>
+</dict>
+</plist>
