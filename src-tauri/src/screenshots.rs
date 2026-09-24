@@ -66,6 +66,13 @@ fn capture_rgba() -> Result<image::RgbaImage, String> {
     use screencapturekit::stream::configuration::SCStreamConfiguration;
     use screencapturekit::stream::content_filter::SCContentFilter;
 
+    // SCScreenshotManager exists only on macOS 14+. Ventura (13) is the last
+    // release some Macs can run, and CGWindowListCreateImage still includes
+    // real windows there. macOS 14+ drops those windows, so it stays on ScreenCaptureKit.
+    if macos_major() < 14 {
+        return capture_rgba_legacy();
+    }
+
     ensure_screen_capture_access();
     let content = SCShareableContent::get().map_err(capture_error)?;
     let displays = content.displays();
@@ -95,6 +102,50 @@ fn capture_rgba() -> Result<image::RgbaImage, String> {
     let h = image.height() as u32;
     image::RgbaImage::from_raw(w, h, pixels)
         .ok_or_else(|| "Screen capture returned an unexpected image".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_major() -> u32 {
+    extern "C" {
+        fn sysctlbyname(
+            name: *const i8,
+            oldp: *mut std::ffi::c_void,
+            oldlenp: *mut usize,
+            newp: *mut std::ffi::c_void,
+            newlen: usize,
+        ) -> i32;
+    }
+    let mut buf = [0u8; 32];
+    let mut len = buf.len();
+    let name = std::ffi::CString::new("kern.osproductversion").unwrap_or_default();
+    let rc = unsafe {
+        sysctlbyname(
+            name.as_ptr(),
+            buf.as_mut_ptr().cast(),
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 {
+        return 0;
+    }
+    let end = len.min(buf.len());
+    let text = std::str::from_utf8(&buf[..end]).unwrap_or("").trim_end_matches('\0');
+    text.split('.').next().and_then(|part| part.parse().ok()).unwrap_or(0)
+}
+
+/// macOS 13 and earlier. `xcap` uses CGWindowListCreateImage, which still
+/// records the windows on screen before macOS 14.
+#[cfg(target_os = "macos")]
+fn capture_rgba_legacy() -> Result<image::RgbaImage, String> {
+    let monitors = xcap::Monitor::all().map_err(|e| e.to_string())?;
+    let primary = monitors
+        .iter()
+        .find(|monitor| monitor.is_primary().unwrap_or(false))
+        .or_else(|| monitors.first())
+        .ok_or_else(|| SCREEN_PERMISSION.to_string())?;
+    primary.capture_image().map_err(|_| SCREEN_PERMISSION.to_string())
 }
 
 #[cfg(target_os = "macos")]
