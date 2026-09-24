@@ -55,6 +55,10 @@ fn capture_jpeg() -> Result<Vec<u8>, String> {
 /// The display the user is actually working on. A secondary display that is
 /// only showing the desktop still has the frontmost app in the menu bar, so
 /// grabbing the first monitor looks like a home-screen visit.
+///
+/// Do not use `SCShareableContent::snapshot()`. In screencapturekit 8.0.1 that
+/// indexes a buffer whose length is still 0, so the first capture panics and
+/// the screenshot task never runs again.
 #[cfg(target_os = "macos")]
 fn capture_rgba() -> Result<image::RgbaImage, String> {
     use screencapturekit::screenshot_manager::{CGImageExt, SCScreenshotManager};
@@ -62,77 +66,89 @@ fn capture_rgba() -> Result<image::RgbaImage, String> {
     use screencapturekit::stream::configuration::SCStreamConfiguration;
     use screencapturekit::stream::content_filter::SCContentFilter;
 
-    let content = SCShareableContent::create()
-        .with_on_screen_windows_only(true)
-        .with_exclude_desktop_windows(true)
-        .get()
-        .map_err(|_| SCREEN_PERMISSION.to_string())?;
-    let snapshot = content
-        .snapshot()
-        .ok_or_else(|| SCREEN_PERMISSION.to_string())?;
-    if snapshot.displays.is_empty() {
+    ensure_screen_capture_access();
+    let content = SCShareableContent::get().map_err(capture_error)?;
+    let displays = content.displays();
+    if displays.is_empty() {
         return Err(SCREEN_PERMISSION.to_string());
     }
-
+    let windows = content.windows();
     let front_pid = active_win_pos_rs::get_active_window()
         .ok()
         .map(|win| win.process_id as i32)
         .filter(|pid| *pid > 0);
-    let display_id = focused_display_id(&snapshot, front_pid)
-        .or_else(|| snapshot.displays.first().map(|d| d.display_id))
-        .ok_or_else(|| SCREEN_PERMISSION.to_string())?;
-    let displays = content.displays();
-    let display = displays
-        .iter()
-        .find(|d| d.display_id() == display_id)
-        .or_else(|| displays.first())
-        .ok_or_else(|| SCREEN_PERMISSION.to_string())?;
+    let display = focused_display(&displays, &windows, front_pid).unwrap_or(&displays[0]);
 
     let filter = SCContentFilter::create()
         .with_display(display)
         .with_excluding_windows(&[])
         .build();
-    let scale = filter.point_pixel_scale();
-    let scale = if scale > 0.0 { scale } else { 1.0 };
-    let frame = display.frame();
-    let native_w = (frame.size.width as f32 * scale).round().max(1.0) as u32;
-    let native_h = (frame.size.height as f32 * scale).round().max(1.0) as u32;
-    let (width, height) = cap_capture_size(native_w, native_h);
+    let (width, height) = cap_capture_size(display.width().max(1), display.height().max(1));
     let config = SCStreamConfiguration::new()
         .with_width(width)
-        .with_height(height);
+        .with_height(height)
+        .with_scales_to_fit(true);
 
-    let image = SCScreenshotManager::capture_image(&filter, &config).map_err(|_| {
-        SCREEN_PERMISSION.to_string()
-    })?;
-    let pixels = image.rgba_data().map_err(|e| e.to_string())?;
+    let image = SCScreenshotManager::capture_image(&filter, &config).map_err(capture_error)?;
+    let pixels = image.rgba_data().map_err(capture_error)?;
     let w = image.width() as u32;
     let h = image.height() as u32;
-    image::RgbaImage::from_raw(w, h, pixels).ok_or_else(|| "Screen capture returned an unexpected image".to_string())
+    image::RgbaImage::from_raw(w, h, pixels)
+        .ok_or_else(|| "Screen capture returned an unexpected image".to_string())
 }
 
 #[cfg(target_os = "macos")]
-fn focused_display_id(
-    snapshot: &screencapturekit::shareable_content::ContentSnapshot,
-    front_pid: Option<i32>,
-) -> Option<u32> {
-    use screencapturekit::cg::CGRect;
+fn ensure_screen_capture_access() {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+        fn CGRequestScreenCaptureAccess() -> bool;
+    }
+    unsafe {
+        if !CGPreflightScreenCaptureAccess() {
+            CGRequestScreenCaptureAccess();
+        }
+    }
+}
 
-    let area = |frame: &CGRect| (frame.size.width * frame.size.height).max(0.0);
+#[cfg(target_os = "macos")]
+fn capture_error(err: impl std::fmt::Display) -> String {
+    let msg = err.to_string();
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("permission") || lower.contains("not authorized") || lower.contains("tcc") {
+        SCREEN_PERMISSION.to_string()
+    } else {
+        format!("Screen capture failed: {msg}")
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn focused_display<'a>(
+    displays: &'a [screencapturekit::shareable_content::SCDisplay],
+    windows: &'a [screencapturekit::shareable_content::SCWindow],
+    front_pid: Option<i32>,
+) -> Option<&'a screencapturekit::shareable_content::SCDisplay> {
+    use screencapturekit::cg::CGRect;
+    use screencapturekit::shareable_content::SCWindow;
+
+    let area = |window: &SCWindow| {
+        let frame = window.frame();
+        (frame.size.width * frame.size.height).max(0.0)
+    };
     let contains = |frame: &CGRect, x: f64, y: f64| {
         x >= frame.origin.x
             && y >= frame.origin.y
             && x < frame.origin.x + frame.size.width
             && y < frame.origin.y + frame.size.height
     };
-    let usable: Vec<_> = snapshot
-        .windows
+    let usable: Vec<&SCWindow> = windows
         .iter()
         .filter(|w| {
-            w.is_on_screen
-                && w.window_layer == 0
-                && w.frame.size.width >= 200.0
-                && w.frame.size.height >= 200.0
+            let frame = w.frame();
+            w.is_on_screen()
+                && w.window_layer() == 0
+                && frame.size.width >= 200.0
+                && frame.size.height >= 200.0
         })
         .collect();
     let focused = front_pid.and_then(|pid| {
@@ -140,41 +156,32 @@ fn focused_display_id(
             .iter()
             .copied()
             .filter(|w| {
-                w.owning_app_index
-                    .and_then(|i| snapshot.applications.get(i))
-                    .is_some_and(|app| app.process_id == pid)
+                w.owning_application()
+                    .is_some_and(|app| app.process_id() == pid)
             })
-            .max_by(|a, b| area(&a.frame).total_cmp(&area(&b.frame)))
+            .max_by(|a, b| area(a).total_cmp(&area(b)))
     });
-    let window = focused.or_else(|| {
-        usable
-            .into_iter()
-            .max_by(|a, b| area(&a.frame).total_cmp(&area(&b.frame)))
-    });
-    let window = window?;
-    let cx = window.frame.origin.x + window.frame.size.width / 2.0;
-    let cy = window.frame.origin.y + window.frame.size.height / 2.0;
-    snapshot
-        .displays
-        .iter()
-        .find(|d| contains(&d.frame, cx, cy))
-        .map(|d| d.display_id)
+    let window = focused.or_else(|| usable.into_iter().max_by(|a, b| area(a).total_cmp(&area(b))))?;
+    let frame = window.frame();
+    let cx = frame.origin.x + frame.size.width / 2.0;
+    let cy = frame.origin.y + frame.size.height / 2.0;
+    displays.iter().find(|d| contains(&d.frame(), cx, cy))
 }
 
 #[cfg(target_os = "macos")]
 fn cap_capture_size(width: u32, height: u32) -> (u32, u32) {
     const MAX_EDGE: u32 = 1600;
     let longest = width.max(height);
-    if longest <= MAX_EDGE || longest == 0 {
-        return (width.max(1), height.max(1));
-    }
-    if width >= height {
+    let (width, height) = if longest <= MAX_EDGE || longest == 0 {
+        (width.max(1), height.max(1))
+    } else if width >= height {
         let h = (u64::from(height) * u64::from(MAX_EDGE) / u64::from(width)).max(1) as u32;
         (MAX_EDGE, h)
     } else {
         let w = (u64::from(width) * u64::from(MAX_EDGE) / u64::from(height)).max(1) as u32;
         (w, MAX_EDGE)
-    }
+    };
+    (width.max(2) & !1, height.max(2) & !1)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -285,8 +292,11 @@ pub fn start(app: AppHandle) {
                 }
                 if !captured && tokio::time::Instant::now() >= capture_at {
                     captured = true;
-                    match capture_jpeg() {
-                        Ok(jpeg) => {
+                    // Blocking ScreenCaptureKit wait must not run on the async worker.
+                    // A panic there used to abort this task permanently.
+                    let shot = tokio::task::spawn_blocking(capture_jpeg).await;
+                    match shot {
+                        Ok(Ok(jpeg)) => {
                             let dir = queue::image_dir(&data_dir(&app));
                             let path = dir.join(format!("{}-{}.jpg", win.window_start, rand::thread_rng().gen_range(0..1_000_000)));
                             if fs::write(&path, jpeg).is_ok() {
@@ -296,9 +306,16 @@ pub fn start(app: AppHandle) {
                                 hub.patch(&app, |s| s.monitoring_error = None);
                             }
                         }
-                        Err(msg) => {
+                        Ok(Err(msg)) => {
                             if let Some(hub) = app.try_state::<Hub>() {
                                 hub.patch(&app, |s| s.monitoring_error = Some(msg));
+                            }
+                        }
+                        Err(_) => {
+                            if let Some(hub) = app.try_state::<Hub>() {
+                                hub.patch(&app, |s| {
+                                    s.monitoring_error = Some("Screen capture failed".into());
+                                });
                             }
                         }
                     }

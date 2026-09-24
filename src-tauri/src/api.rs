@@ -27,7 +27,10 @@ impl ApiError {
 pub fn api_base() -> String {
     std::env::var("VITE_API_URL")
         .or_else(|_| std::env::var("API_BASE"))
-        .unwrap_or_else(|_| DEFAULT_API_BASE.to_string())
+        .ok()
+        .or_else(|| option_env!("VITE_API_URL").map(str::to_string))
+        .or_else(|| option_env!("API_BASE").map(str::to_string))
+        .unwrap_or_else(|| DEFAULT_API_BASE.to_string())
         .trim_end_matches('/')
         .to_string()
 }

@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "Leapsofts ERP desktop (Tauri) with time tracker overlay",
+  "author": "aliroohan321@gmail.com",
   "type": "module",
   "scripts": {
     "dev": "vite",

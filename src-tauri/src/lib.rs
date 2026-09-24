@@ -17,7 +17,10 @@ use state::Hub;
 use tauri::Manager;
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
-const ERP_URL: &str = "https://erp.leapsofts.com/projects";
+const ERP_URL: &str = match option_env!("ERP_URL") {
+    Some(url) => url,
+    None => "https://erp.leapsofts.com/projects",
+};
 
 #[tauri::command]
 fn get_state(app: tauri::AppHandle) -> types::TrackerState {
