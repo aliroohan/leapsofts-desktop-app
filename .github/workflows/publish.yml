@@ -1,13 +1,23 @@
-# Build + sign updater artifacts on a version tag (e.g. v0.1.1) and upload to GitHub Releases.
+# Build + sign updater artifacts on a version tag (e.g. v0.1.1) or manual run,
+# then upload to GitHub Releases.
 # Requires repo secret TAURI_SIGNING_PRIVATE_KEY (content of the private key from
 #   npx tauri signer generate -w ~/.tauri/leapsofts-erp-app.key
 # Never commit the private key. Public key lives in src-tauri/tauri.conf.json.
+#
+# Note: tag builds only fire after this workflow file is already on the default
+# branch, and the tag must match v* (e.g. v0.1.1 — not bare 0.1.1).
 name: publish
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create/upload (e.g. v0.1.1)"
+        required: true
+        type: string
 
 jobs:
   publish-tauri:
@@ -17,9 +27,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # macos-latest is Apple Silicon; build ARM natively and Intel via explicit target.
           - platform: macos-latest
+            target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin
           - platform: macos-latest
+            target: x86_64-apple-darwin
             args: --target x86_64-apple-darwin
           - platform: ubuntu-22.04
             args: ""
@@ -45,12 +58,14 @@ jobs:
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          # Install only the matrix target on macOS (ARM + Intel jobs are separate).
+          targets: ${{ matrix.target || '' }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
+          key: ${{ matrix.target || matrix.platform }}
 
       - name: install frontend dependencies
         run: npm install
@@ -61,8 +76,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Leapsofts ERP ${{ github.ref_name }}
+          tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          releaseName: Leapsofts ERP ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           releaseBody: Desktop build with updater artifacts (latest.json + installers).
           releaseDraft: false
           prerelease: false
