@@ -34,7 +34,8 @@ jobs:
           - platform: macos-latest
             target: x86_64-apple-darwin
             args: --target x86_64-apple-darwin
-          - platform: ubuntu-22.04
+          # 24.04: PipeWire 1.0. xcap/libspa 0.8 do not compile against 22.04's 0.3.48 headers.
+          - platform: ubuntu-24.04
             args: ""
           - platform: windows-latest
             args: ""
@@ -44,10 +45,10 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: install dependencies (ubuntu only)
-        if: matrix.platform == 'ubuntu-22.04'
+        if: startsWith(matrix.platform, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils libxss-dev libx11-dev libxi-dev libxtst-dev libxrandr-dev libxext-dev libpipewire-0.3-dev libdbus-1-dev libxdo-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils libxss-dev libx11-dev libxi-dev libxtst-dev libxrandr-dev libxext-dev libpipewire-0.3-dev libdbus-1-dev libxdo-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libgbm-dev libdrm-dev libwayland-dev libegl1-mesa-dev
 
       - name: setup node
         uses: actions/setup-node@v5
