@@ -31,6 +31,7 @@ active-win-pos-rs = "0.8"
 url = "2"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 thiserror = "2"
+tauri-plugin-process = "2.4.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 macos-accessibility-client = "0.0.1"
@@ -38,3 +39,6 @@ screencapturekit = { version = "8", features = ["macos_14_0"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 rdev = "0.5"
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-updater = "2.13.1"

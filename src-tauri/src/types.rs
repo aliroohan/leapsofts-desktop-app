@@ -22,6 +22,28 @@ pub struct ShiftBreak {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ShiftSession {
+    pub check_in_time: String,
+    pub check_out_time: Option<String>,
+    #[serde(default)]
+    pub checkout_reason: Option<String>,
+    #[serde(default)]
+    pub breaks: Vec<ShiftBreak>,
+    #[serde(default)]
+    pub worked_minutes: f64,
+    #[serde(default)]
+    pub break_minutes: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShiftMeeting {
+    pub start_time: String,
+    pub end_time: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Shift {
     #[serde(rename = "_id", default)]
     pub id: String,
@@ -40,6 +62,10 @@ pub struct Shift {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_active: Option<bool>,
+    #[serde(default)]
+    pub sessions: Vec<ShiftSession>,
+    #[serde(default)]
+    pub meetings: Vec<ShiftMeeting>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,6 +212,17 @@ pub fn open_break_source(shift: &Option<Shift>) -> Option<String> {
             .unwrap_or("manual")
             .to_string(),
     )
+}
+
+/// True when `meetings` has an entry with no `endTime` (meeting mode pauses tracking).
+pub fn has_open_meeting(shift: &Option<Shift>) -> bool {
+    let Some(shift) = shift.as_ref() else {
+        return false;
+    };
+    shift.meetings
+        .last()
+        .map(|m| m.end_time.is_none())
+        .unwrap_or(false)
 }
 
 pub fn is_checked_in(shift: &Option<Shift>) -> bool {

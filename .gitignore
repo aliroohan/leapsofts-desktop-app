@@ -24,3 +24,8 @@ dist-ssr
 *.sw?
 
 .env
+
+# Tauri updater signing keys — never commit the private key
+*.key
+*.key.pub
+.tauri/

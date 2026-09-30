@@ -2,7 +2,15 @@ import { useEffect, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { LoginResult, TrackerState } from "./types";
-import { formatDuration, getWorkedSeconds, openBreak } from "./time";
+import {
+  formatClockTime,
+  formatDuration,
+  formatMinutesAsDuration,
+  getWorkedSeconds,
+  openBreak,
+  openMeeting,
+} from "./time";
+import { checkAndInstallUpdate, restartApp } from "./updater";
 
 export default function App(): JSX.Element {
   const [state, setState] = useState<TrackerState | null>(null);
@@ -13,6 +21,9 @@ export default function App(): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateReadyVersion, setUpdateReadyVersion] = useState<string | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<string | null>(null);
 
   useEffect(() => {
     void invoke<TrackerState>("get_state").then(setState);
@@ -28,6 +39,45 @@ export default function App(): JSX.Element {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
+
+  // Production launches: install quietly if a release exists. Dev / offline / missing plugin: no crash.
+  useEffect(() => {
+    if (import.meta.env.DEV) return;
+    let cancelled = false;
+    void (async () => {
+      const result = await checkAndInstallUpdate();
+      if (cancelled) return;
+      if (result.kind === "ready") {
+        setUpdateReadyVersion(result.version);
+        setUpdateInfo(`Update ${result.version} is ready. Restart to apply.`);
+      }
+      // kind "none" / "error": stay quiet on launch
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const runUpdateCheck = async (opts?: { silent?: boolean }): Promise<void> => {
+    setUpdateBusy(true);
+    if (!opts?.silent) {
+      setUpdateInfo(null);
+      setFormError(null);
+    }
+    try {
+      const result = await checkAndInstallUpdate();
+      if (result.kind === "ready") {
+        setUpdateReadyVersion(result.version);
+        setUpdateInfo(`Update ${result.version} is ready. Restart to apply.`);
+      } else if (result.kind === "none") {
+        if (!opts?.silent) setUpdateInfo("You're up to date.");
+      } else if (!opts?.silent) {
+        setUpdateInfo(result.message);
+      }
+    } finally {
+      setUpdateBusy(false);
+    }
+  };
 
   const run = async (fn: () => Promise<TrackerState>): Promise<boolean> => {
     setBusy(true);
@@ -78,6 +128,37 @@ export default function App(): JSX.Element {
     }
   };
 
+  const updateBanner =
+    updateReadyVersion || updateInfo ? (
+      <div className="card">
+        {updateInfo ? <p className="sub">{updateInfo}</p> : null}
+        {updateReadyVersion ? (
+          <button
+            disabled={updateBusy}
+            onClick={() => {
+              void restartApp().catch(() => {
+                setUpdateInfo("Restart failed. Quit and reopen the app to finish updating.");
+              });
+            }}
+          >
+            Restart now
+          </button>
+        ) : null}
+      </div>
+    ) : null;
+
+  const updateCheckButton = (
+    <div className="row">
+      <button
+        className="secondary"
+        disabled={busy || updateBusy}
+        onClick={() => void runUpdateCheck()}
+      >
+        {updateBusy ? "Checking…" : "Check for updates"}
+      </button>
+    </div>
+  );
+
   if (!state.isAuthenticated && tempToken) {
     return (
       <div className="app">
@@ -127,6 +208,8 @@ export default function App(): JSX.Element {
             Back to sign in
           </button>
         </form>
+        {updateBanner}
+        {updateCheckButton}
       </div>
     );
   }
@@ -166,6 +249,8 @@ export default function App(): JSX.Element {
             {busy ? "Signing in…" : "Sign in"}
           </button>
         </form>
+        {updateBanner}
+        {updateCheckButton}
       </div>
     );
   }
@@ -173,8 +258,11 @@ export default function App(): JSX.Element {
   const shift = state.shift;
   const checkedIn = shift?.status === "checked_in";
   const currentBreak = openBreak(shift);
+  const currentMeeting = openMeeting(shift);
   const source = currentBreak?.source ?? (currentBreak ? "manual" : null);
   const elapsed = getWorkedSeconds(shift, now);
+  const sessions = shift?.sessions ?? [];
+  const meetings = shift?.meetings ?? [];
   const name =
     `${state.user?.firstName ?? ""} ${state.user?.lastName ?? ""}`.trim() ||
     state.user?.email ||
@@ -199,7 +287,9 @@ export default function App(): JSX.Element {
       <div className="card">
         <div className="meta">
           <span>{checkedIn ? "Worked today" : "Not checked in"}</span>
-          {source ? (
+          {currentMeeting ? (
+            <span className="badge meeting">In meeting</span>
+          ) : source ? (
             <span className={`badge ${source}`}>
               {source === "idle"
                 ? "Idle break"
@@ -222,7 +312,7 @@ export default function App(): JSX.Element {
         {formError ? <p className="error">{formError}</p> : null}
       </div>
 
-      {checkedIn && !currentBreak ? (
+      {checkedIn && !currentBreak && !currentMeeting ? (
         <div className="card">
           {state.monitoringError ? (
             <p className="error">{state.monitoringError}</p>
@@ -256,13 +346,13 @@ export default function App(): JSX.Element {
         ) : (
           <button
             className="danger"
-            disabled={busy}
+            disabled={busy || !!currentMeeting}
             onClick={() => run(() => invoke<TrackerState>("check_out"))}
           >
             Check out
           </button>
         )}
-        {checkedIn && !currentBreak ? (
+        {checkedIn && !currentBreak && !currentMeeting ? (
           <button
             className="secondary"
             disabled={busy}
@@ -271,7 +361,7 @@ export default function App(): JSX.Element {
             Start break
           </button>
         ) : null}
-        {checkedIn && currentBreak ? (
+        {checkedIn && currentBreak && !currentMeeting ? (
           <button
             className="secondary"
             disabled={busy}
@@ -280,7 +370,68 @@ export default function App(): JSX.Element {
             End break
           </button>
         ) : null}
+        {checkedIn && !currentMeeting ? (
+          <button
+            className="secondary"
+            disabled={busy || !!currentBreak}
+            onClick={() => run(() => invoke<TrackerState>("start_meeting"))}
+          >
+            Start meeting
+          </button>
+        ) : null}
+        {checkedIn && currentMeeting ? (
+          <button
+            className="secondary"
+            disabled={busy}
+            onClick={() => run(() => invoke<TrackerState>("end_meeting"))}
+          >
+            End meeting
+          </button>
+        ) : null}
       </div>
+
+      {shift && (sessions.length > 0 || meetings.length > 0 || (shift.totalMinutes ?? 0) > 0) ? (
+        <div className="card day-log">
+          <div className="meta">
+            <span>Today</span>
+            <span>Total {formatMinutesAsDuration(shift.totalMinutes)}</span>
+          </div>
+          {sessions.length > 0 ? (
+            <ul className="day-list">
+              {sessions.map((session, index) => (
+                <li key={`session-${index}`}>
+                  <span className="day-label">Session {index + 1}</span>
+                  <span>
+                    {formatClockTime(session.checkInTime)}
+                    {" → "}
+                    {session.checkOutTime ? formatClockTime(session.checkOutTime) : "open"}
+                    {session.checkoutReason
+                      ? ` · ${session.checkoutReason === "inactivity" ? "auto" : "user"}`
+                      : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {meetings.length > 0 ? (
+            <ul className="day-list">
+              {meetings.map((meeting, index) => (
+                <li key={`meeting-${index}`}>
+                  <span className="day-label">Meeting {index + 1}</span>
+                  <span>
+                    {formatClockTime(meeting.startTime)}
+                    {" → "}
+                    {meeting.endTime ? formatClockTime(meeting.endTime) : "open"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+
+      {updateBanner}
+      {updateCheckButton}
     </div>
   );
 }

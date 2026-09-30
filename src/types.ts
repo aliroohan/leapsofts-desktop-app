@@ -1,9 +1,24 @@
 export type BreakSource = "manual" | "idle" | "sleep" | "offline";
+export type CheckoutReason = "user" | "inactivity";
 
 export interface ShiftBreak {
   startTime: string;
   endTime: string | null;
   source?: BreakSource;
+}
+
+export interface ShiftSession {
+  checkInTime: string;
+  checkOutTime: string | null;
+  checkoutReason?: CheckoutReason | null;
+  breaks?: ShiftBreak[];
+  workedMinutes?: number;
+  breakMinutes?: number;
+}
+
+export interface ShiftMeeting {
+  startTime: string;
+  endTime: string | null;
 }
 
 export interface Shift {
@@ -17,6 +32,8 @@ export interface Shift {
   totalBreakMinutes?: number;
   status: "not_started" | "checked_in" | "checked_out";
   isActive?: boolean;
+  sessions?: ShiftSession[];
+  meetings?: ShiftMeeting[];
 }
 
 export interface TrackerUser {

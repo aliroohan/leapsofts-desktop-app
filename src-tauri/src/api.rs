@@ -279,6 +279,20 @@ impl Api {
         serde_json::from_value(data).map_err(|e| ApiError::Message(e.to_string()))
     }
 
+    pub async fn start_meeting(&self) -> Result<Shift, ApiError> {
+        let data = self
+            .send_json(reqwest::Method::POST, "/shifts/meeting/start", None, true)
+            .await?;
+        serde_json::from_value(data).map_err(|e| ApiError::Message(e.to_string()))
+    }
+
+    pub async fn end_meeting(&self) -> Result<Shift, ApiError> {
+        let data = self
+            .send_json(reqwest::Method::POST, "/shifts/meeting/end", None, true)
+            .await?;
+        serde_json::from_value(data).map_err(|e| ApiError::Message(e.to_string()))
+    }
+
     pub async fn record_break(&self, start: &str, end: &str, source: &str) -> Result<Shift, ApiError> {
         let data = self
             .send_json(

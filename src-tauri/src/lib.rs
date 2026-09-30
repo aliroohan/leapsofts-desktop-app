@@ -92,14 +92,40 @@ async fn end_break(app: tauri::AppHandle) -> Result<types::TrackerState, String>
     Ok(app.state::<Hub>().get(&app))
 }
 
+#[tauri::command]
+async fn start_meeting(app: tauri::AppHandle) -> Result<types::TrackerState, String> {
+    session::user_start_meeting(&app).await?;
+    Ok(app.state::<Hub>().get(&app))
+}
+
+#[tauri::command]
+async fn end_meeting(app: tauri::AppHandle) -> Result<types::TrackerState, String> {
+    session::user_end_meeting(&app).await?;
+    Ok(app.state::<Hub>().get(&app))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
-            get_state, login, verify_2fa, logout, check_in, check_out, start_break, end_break
+            get_state,
+            login,
+            verify_2fa,
+            logout,
+            check_in,
+            check_out,
+            start_break,
+            end_break,
+            start_meeting,
+            end_meeting
         ])
         .setup(|app| {
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
+
             let _ = dotenvy::from_filename("../.env");
             let _ = dotenvy::dotenv();
             let handle = app.handle().clone();

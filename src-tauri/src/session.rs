@@ -3,7 +3,7 @@ use crate::app_usage;
 use crate::queue;
 use crate::screenshots;
 use crate::state::Hub;
-use crate::types::{is_checked_in, open_break_source, Shift};
+use crate::types::{has_open_meeting, is_checked_in, open_break_source, Shift};
 use tauri::{AppHandle, Manager};
 
 pub fn sync_monitors(app: &AppHandle) {
@@ -55,6 +55,10 @@ pub fn should_record_sleep(app: &AppHandle) -> bool {
     if !st.is_authenticated || !is_checked_in(&st.shift) {
         return false;
     }
+    // Meeting mode: do not record sleep/offline intervals.
+    if has_open_meeting(&st.shift) {
+        return false;
+    }
     !matches!(
         open_break_source(&st.shift).as_deref(),
         Some("manual") | Some("idle") | Some("sleep")
@@ -67,6 +71,10 @@ fn should_log_heartbeat(app: &AppHandle) -> bool {
     };
     let st = hub.get(app);
     if !st.is_authenticated || !is_checked_in(&st.shift) {
+        return false;
+    }
+    // Meeting mode: pause heartbeats while meetings has an open entry.
+    if has_open_meeting(&st.shift) {
         return false;
     }
     let threshold = (st.idle_timeout_minutes.max(1) as u64) * 60;
@@ -356,6 +364,26 @@ pub async fn user_end_break(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+pub async fn user_start_meeting(app: &AppHandle) -> Result<(), String> {
+    let shift = app
+        .state::<Api>()
+        .start_meeting()
+        .await
+        .map_err(|e| e.to_string())?;
+    apply_shift(app, Some(shift)).await;
+    Ok(())
+}
+
+pub async fn user_end_meeting(app: &AppHandle) -> Result<(), String> {
+    let shift = app
+        .state::<Api>()
+        .end_meeting()
+        .await
+        .map_err(|e| e.to_string())?;
+    apply_shift(app, Some(shift)).await;
+    Ok(())
+}
+
 static IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static ACTIVITY_STREAK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
@@ -389,6 +417,10 @@ pub async fn on_idle_tick(app: &AppHandle) {
 async fn maybe_start_idle_break(app: &AppHandle, idle_seconds: u64) {
     let st = app.state::<Hub>().get(app);
     if !st.is_authenticated || !st.is_online || !is_checked_in(&st.shift) {
+        return;
+    }
+    // Meeting mode: do not open idle breaks.
+    if has_open_meeting(&st.shift) {
         return;
     }
     if open_break_source(&st.shift).is_some() {

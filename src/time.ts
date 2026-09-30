@@ -1,4 +1,4 @@
-import type { Shift, ShiftBreak } from "./types";
+import type { Shift, ShiftBreak, ShiftMeeting } from "./types";
 
 const getBreakSeconds = (breaks: ShiftBreak[], untilMs: number): number =>
   breaks.reduce((sum, b) => {
@@ -25,9 +25,28 @@ export function formatDuration(totalSeconds: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+export function formatClockTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+export function formatMinutesAsDuration(minutes: number | null | undefined): string {
+  const totalSeconds = Math.max(0, Math.floor((minutes ?? 0) * 60));
+  return formatDuration(totalSeconds);
+}
+
 export function openBreak(shift: Shift | null): ShiftBreak | null {
   const breaks = shift?.breaks;
   if (!breaks?.length) return null;
   const last = breaks[breaks.length - 1];
+  return last.endTime ? null : last;
+}
+
+export function openMeeting(shift: Shift | null): ShiftMeeting | null {
+  const meetings = shift?.meetings;
+  if (!meetings?.length) return null;
+  const last = meetings[meetings.length - 1];
   return last.endTime ? null : last;
 }
