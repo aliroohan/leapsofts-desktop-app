@@ -1,4 +1,5 @@
 import { useEffect, useState, type JSX } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { LoginResult, TrackerState } from "./types";
@@ -24,8 +25,10 @@ export default function App(): JSX.Element {
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateReadyVersion, setUpdateReadyVersion] = useState<string | null>(null);
   const [updateInfo, setUpdateInfo] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
 
   useEffect(() => {
+    void getVersion().then(setAppVersion).catch(() => setAppVersion(null));
     void invoke<TrackerState>("get_state").then(setState);
     const unlisten = listen<TrackerState>("tracker-state", (event) => {
       setState(event.payload);
@@ -156,6 +159,7 @@ export default function App(): JSX.Element {
       >
         {updateBusy ? "Checking…" : "Check for updates"}
       </button>
+      {appVersion ? <p className="sub">Version {appVersion}</p> : null}
     </div>
   );
 
