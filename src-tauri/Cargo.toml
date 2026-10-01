@@ -1,6 +1,6 @@
 [package]
 name = "leapsofts-erp-app"
-version = "0.1.0"
+version = "0.1.2"
 description = "Leapsofts ERP desktop with time tracker"
 authors = ["Leapsofts"]
 edition = "2021"

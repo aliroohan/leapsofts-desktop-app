@@ -35,6 +35,70 @@ async fn apply_shift(app: &AppHandle, shift: Option<Shift>) {
     sync_monitors(app);
 }
 
+fn is_stale_shift_conflict(err: &ApiError) -> bool {
+    if err.is_network() {
+        return false;
+    }
+    let lower = err.to_string().to_lowercase();
+    [
+        "not currently on break",
+        "already on break",
+        "not currently checked in",
+        "already checked in",
+        "meeting is already in progress",
+        "no meeting in progress",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+}
+
+async fn reconcile_shift_from_server(app: &AppHandle) -> Result<(), String> {
+    let shift = app
+        .state::<Api>()
+        .fetch_today_shift()
+        .await
+        .map_err(|e| e.to_string())?;
+    apply_shift(app, shift).await;
+    if let Some(hub) = app.try_state::<Hub>() {
+        hub.patch(app, |s| s.last_error = None);
+    }
+    Ok(())
+}
+
+struct ShiftBusyGuard;
+
+impl ShiftBusyGuard {
+    fn enter() -> Self {
+        SHIFT_BUSY.store(true, std::sync::atomic::Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for ShiftBusyGuard {
+    fn drop(&mut self) {
+        SHIFT_BUSY.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// When the server says local state is already behind, refetches today's shift
+/// and returns `Ok(None)`. A failed refetch keeps the original conflict message.
+async fn finish_shift_mutation(
+    app: &AppHandle,
+    result: Result<Shift, ApiError>,
+) -> Result<Option<Shift>, String> {
+    match result {
+        Ok(shift) => Ok(Some(shift)),
+        Err(e) if is_stale_shift_conflict(&e) => {
+            let message = e.to_string();
+            reconcile_shift_from_server(app)
+                .await
+                .map_err(|_| message)?;
+            Ok(None)
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 async fn refresh_me_quietly(app: &AppHandle) {
     let Some(api) = app.try_state::<Api>() else {
         return;
@@ -315,7 +379,12 @@ pub async fn logout(app: &AppHandle) -> Result<(), String> {
 }
 
 pub async fn user_check_in(app: &AppHandle) -> Result<(), String> {
-    let shift = app.state::<Api>().check_in().await.map_err(|e| e.to_string())?;
+    let _busy = ShiftBusyGuard::enter();
+    let Some(shift) =
+        finish_shift_mutation(app, app.state::<Api>().check_in().await).await?
+    else {
+        return Ok(());
+    };
     apply_shift(app, Some(shift)).await;
     if let Some(api) = app.try_state::<Api>() {
         if let Ok(db) = api.db.lock() {
@@ -332,7 +401,12 @@ pub async fn user_check_out(app: &AppHandle) -> Result<(), String> {
     flush_pending_breaks(app).await;
     let _ = screenshots::flush_pending(app).await;
     let _ = app_usage::flush_pending(app).await;
-    let shift = app.state::<Api>().check_out().await.map_err(|e| e.to_string())?;
+    let _busy = ShiftBusyGuard::enter();
+    let Some(shift) =
+        finish_shift_mutation(app, app.state::<Api>().check_out().await).await?
+    else {
+        return Ok(());
+    };
     apply_shift(app, Some(shift)).await;
     if let Some(api) = app.try_state::<Api>() {
         if let Ok(db) = api.db.lock() {
@@ -349,42 +423,50 @@ pub async fn user_start_break(app: &AppHandle) -> Result<(), String> {
     app_usage::close_open_usage_segment(app);
     let _ = screenshots::flush_pending(app).await;
     let _ = app_usage::flush_pending(app).await;
-    let shift = app
-        .state::<Api>()
-        .start_break("manual")
-        .await
-        .map_err(|e| e.to_string())?;
+    let _busy = ShiftBusyGuard::enter();
+    let Some(shift) =
+        finish_shift_mutation(app, app.state::<Api>().start_break("manual").await).await?
+    else {
+        return Ok(());
+    };
     apply_shift(app, Some(shift)).await;
     Ok(())
 }
 
 pub async fn user_end_break(app: &AppHandle) -> Result<(), String> {
-    let shift = app.state::<Api>().end_break().await.map_err(|e| e.to_string())?;
+    let _busy = ShiftBusyGuard::enter();
+    let Some(shift) = finish_shift_mutation(app, app.state::<Api>().end_break().await).await?
+    else {
+        return Ok(());
+    };
     apply_shift(app, Some(shift)).await;
     Ok(())
 }
 
 pub async fn user_start_meeting(app: &AppHandle) -> Result<(), String> {
-    let shift = app
-        .state::<Api>()
-        .start_meeting()
-        .await
-        .map_err(|e| e.to_string())?;
+    let _busy = ShiftBusyGuard::enter();
+    let Some(shift) =
+        finish_shift_mutation(app, app.state::<Api>().start_meeting().await).await?
+    else {
+        return Ok(());
+    };
     apply_shift(app, Some(shift)).await;
     Ok(())
 }
 
 pub async fn user_end_meeting(app: &AppHandle) -> Result<(), String> {
-    let shift = app
-        .state::<Api>()
-        .end_meeting()
-        .await
-        .map_err(|e| e.to_string())?;
+    let _busy = ShiftBusyGuard::enter();
+    let Some(shift) = finish_shift_mutation(app, app.state::<Api>().end_meeting().await).await?
+    else {
+        return Ok(());
+    };
     apply_shift(app, Some(shift)).await;
     Ok(())
 }
 
 static IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SHIFT_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static REFRESH_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static ACTIVITY_STREAK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 pub async fn on_idle_tick(app: &AppHandle) {
@@ -409,9 +491,10 @@ pub async fn on_idle_tick(app: &AppHandle) {
 
     if ACTIVITY_STREAK.load(std::sync::atomic::Ordering::Relaxed) >= 3 {
         maybe_end_idle_break(app).await;
-        return;
+    } else {
+        maybe_start_idle_break(app, idle_seconds).await;
     }
-    maybe_start_idle_break(app, idle_seconds).await;
+    maybe_refresh_shift_from_server(app).await;
 }
 
 async fn maybe_start_idle_break(app: &AppHandle, idle_seconds: u64) {
@@ -449,6 +532,14 @@ async fn maybe_start_idle_break(app: &AppHandle, idle_seconds: u64) {
         Err(e) if e.is_network() => {
             app.state::<Hub>().patch(app, |s| s.is_online = false);
         }
+        Err(e) if is_stale_shift_conflict(&e) => {
+            let message = e.to_string();
+            if reconcile_shift_from_server(app).await.is_err() {
+                app.state::<Hub>().patch(app, |s| {
+                    s.last_error = Some(message);
+                });
+            }
+        }
         Err(e) => {
             app.state::<Hub>().patch(app, |s| {
                 s.last_error = Some(e.to_string());
@@ -474,6 +565,14 @@ async fn maybe_end_idle_break(app: &AppHandle) {
         Err(e) if e.is_network() => {
             app.state::<Hub>().patch(app, |s| s.is_online = false);
         }
+        Err(e) if is_stale_shift_conflict(&e) => {
+            let message = e.to_string();
+            if reconcile_shift_from_server(app).await.is_err() {
+                app.state::<Hub>().patch(app, |s| {
+                    s.last_error = Some(message);
+                });
+            }
+        }
         Err(e) => {
             app.state::<Hub>().patch(app, |s| s.last_error = Some(e.to_string()));
         }
@@ -484,6 +583,70 @@ async fn maybe_end_idle_break(app: &AppHandle) {
 use std::time::Instant;
 static LAST_TICK: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
 static LAST_HEARTBEAT: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+static LAST_SHIFT_REFRESH: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+
+const SHIFT_REFRESH_SECS: u64 = 30;
+
+fn shift_refresh_due() -> bool {
+    let Ok(mut last) = LAST_SHIFT_REFRESH.lock() else {
+        return false;
+    };
+    let due = last
+        .map(|prev| prev.elapsed().as_secs() >= SHIFT_REFRESH_SECS)
+        .unwrap_or(true);
+    if due {
+        *last = Some(Instant::now());
+    }
+    due
+}
+
+fn clear_shift_refresh_deadline() {
+    if let Ok(mut last) = LAST_SHIFT_REFRESH.lock() {
+        *last = None;
+    }
+}
+
+/// While heartbeats are paused (checked in, on a break, or in a meeting), pull
+/// today's shift so a server-side change replaces the local badge.
+async fn maybe_refresh_shift_from_server(app: &AppHandle) {
+    let st = app.state::<Hub>().get(app);
+    let tracked = st.is_authenticated
+        && st.is_online
+        && (is_checked_in(&st.shift)
+            || has_open_meeting(&st.shift)
+            || open_break_source(&st.shift).is_some());
+    if !tracked {
+        return;
+    }
+    if IN_FLIGHT.load(std::sync::atomic::Ordering::SeqCst)
+        || SHIFT_BUSY.load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return;
+    }
+    if !shift_refresh_due() {
+        return;
+    }
+    if IN_FLIGHT.load(std::sync::atomic::Ordering::SeqCst)
+        || SHIFT_BUSY.load(std::sync::atomic::Ordering::SeqCst)
+        || REFRESH_IN_FLIGHT.swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
+        clear_shift_refresh_deadline();
+        return;
+    }
+    match app.state::<Api>().fetch_today_shift().await {
+        Ok(shift) => {
+            apply_shift(app, shift).await;
+            app.state::<Hub>().patch(app, |s| s.last_error = None);
+        }
+        Err(e) if e.is_network() => {
+            app.state::<Hub>().patch(app, |s| s.is_online = false);
+        }
+        Err(e) => {
+            app.state::<Hub>().patch(app, |s| s.last_error = Some(e.to_string()));
+        }
+    }
+    REFRESH_IN_FLIGHT.store(false, std::sync::atomic::Ordering::SeqCst);
+}
 
 async fn maybe_log_and_flush_heartbeat(app: &AppHandle, online: bool) {
     if !should_log_heartbeat(app) {
