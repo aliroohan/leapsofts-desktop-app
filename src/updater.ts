@@ -22,7 +22,12 @@ export async function checkAndInstallUpdate(): Promise<UpdateOutcome> {
     await update.downloadAndInstall();
     return { kind: "ready", version: update.version };
   } catch (err) {
-    return { kind: "error", message: errorMessage(err) };
+    const message = errorMessage(err);
+    const hint =
+      message.includes("valid release JSON") || message.includes("ReleaseNotFound")
+        ? " Could not load the update manifest (GitHub may be blocked or the release is still publishing). Try again in a few minutes or install the latest build from GitHub Releases."
+        : "";
+    return { kind: "error", message: message + hint };
   }
 }
 
