@@ -1,4 +1,4 @@
-import type { Shift, ShiftBreak, ShiftMeeting } from "./types";
+import type { Shift, ShiftBreak, ShiftMeeting, ShiftSession } from "./types";
 
 const getBreakSeconds = (breaks: ShiftBreak[], untilMs: number): number =>
   breaks.reduce((sum, b) => {
@@ -9,13 +9,44 @@ const getBreakSeconds = (breaks: ShiftBreak[], untilMs: number): number =>
     return sum + Math.max(0, Math.floor((end - start) / 1000));
   }, 0);
 
-export function getWorkedSeconds(shift: Shift | null, untilMs: number = Date.now()): number {
-  if (!shift?.checkInTime || shift.status !== "checked_in") return 0;
+const sessionWorkedSeconds = (session: ShiftSession, untilMs: number): number => {
+  if (session.checkOutTime != null) {
+    if (session.workedMinutes != null && !Number.isNaN(session.workedMinutes)) {
+      return Math.max(0, Math.floor(session.workedMinutes * 60));
+    }
+    const checkInMs = new Date(session.checkInTime).getTime();
+    const checkOutMs = new Date(session.checkOutTime).getTime();
+    if (Number.isNaN(checkInMs) || Number.isNaN(checkOutMs)) return 0;
+    const wallSeconds = Math.floor((checkOutMs - checkInMs) / 1000);
+    const breakSeconds = getBreakSeconds(session.breaks ?? [], checkOutMs);
+    return Math.max(0, wallSeconds - breakSeconds);
+  }
+
+  const checkInMs = new Date(session.checkInTime).getTime();
+  if (Number.isNaN(checkInMs)) return 0;
+  const wallSeconds = Math.floor((untilMs - checkInMs) / 1000);
+  const breakSeconds = getBreakSeconds(session.breaks ?? [], untilMs);
+  return Math.max(0, wallSeconds - breakSeconds);
+};
+
+const legacyWorkedSeconds = (shift: Shift, untilMs: number): number => {
+  if (!shift.checkInTime) return 0;
   const checkInMs = new Date(shift.checkInTime).getTime();
   if (Number.isNaN(checkInMs)) return 0;
   const wallSeconds = Math.floor((untilMs - checkInMs) / 1000);
   const breakSeconds = getBreakSeconds(shift.breaks ?? [], untilMs);
   return Math.max(0, wallSeconds - breakSeconds);
+};
+
+export function getWorkedSeconds(shift: Shift | null, untilMs: number = Date.now()): number {
+  if (!shift || shift.status !== "checked_in") return 0;
+
+  const sessions = shift.sessions;
+  if (sessions?.length) {
+    return sessions.reduce((sum, session) => sum + sessionWorkedSeconds(session, untilMs), 0);
+  }
+
+  return legacyWorkedSeconds(shift, untilMs);
 }
 
 export function formatDuration(totalSeconds: number): string {
