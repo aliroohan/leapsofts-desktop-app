@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Leapsofts Tracker",
+  "identifier": "com.leapsofts.tracker",
+  "app": {
+    "windows": [
+      {
+        "label": "tracker",
+        "title": "Leapsofts Time Tracker",
+        "url": "index.html",
+        "resizable": true,
+        "fullscreen": false
+      }
+    ]
+  },
+  "plugins": {
+    "updater": null
+  }
+}

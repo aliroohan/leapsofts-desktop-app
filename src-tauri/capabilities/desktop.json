@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "Desktop updater and ERP window. Not included in the Android tracker.",
+  "platforms": ["macOS", "windows", "linux"],
+  "windows": ["main", "tracker"],
+  "permissions": ["updater:default"]
+}

@@ -1,3 +1,5 @@
+#![cfg_attr(not(desktop), allow(dead_code))]
+
 use crate::types::{AppUsageSegment, PendingActivitySample, PendingBreak};
 use rusqlite::{params, Connection};
 use std::fs;

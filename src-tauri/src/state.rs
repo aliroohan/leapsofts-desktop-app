@@ -29,6 +29,7 @@ impl Hub {
     pub fn emit(&self, app: &AppHandle) {
         let state = self.get(app);
         let _ = app.emit("tracker-state", &state);
+        #[cfg(desktop)]
         crate::tray::rebuild(app, &state);
     }
 

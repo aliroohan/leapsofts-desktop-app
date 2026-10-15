@@ -26,9 +26,14 @@ export default function App(): JSX.Element {
   const [updateReadyVersion, setUpdateReadyVersion] = useState<string | null>(null);
   const [updateInfo, setUpdateInfo] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [clientKind, setClientKind] = useState<"desktop" | "mobile" | null>(null);
+  const isMobile = clientKind === "mobile";
 
   useEffect(() => {
     void getVersion().then(setAppVersion).catch(() => setAppVersion(null));
+    void invoke<string>("client_kind")
+      .then((kind) => setClientKind(kind === "mobile" ? "mobile" : "desktop"))
+      .catch(() => setClientKind("desktop"));
     void invoke<TrackerState>("get_state").then(setState);
     const unlisten = listen<TrackerState>("tracker-state", (event) => {
       setState(event.payload);
@@ -45,7 +50,7 @@ export default function App(): JSX.Element {
 
   // Production launches: install quietly if a release exists. Dev / offline / missing plugin: no crash.
   useEffect(() => {
-    if (import.meta.env.DEV) return;
+    if (import.meta.env.DEV || clientKind !== "desktop") return;
     let cancelled = false;
     void (async () => {
       const result = await checkAndInstallUpdate();
@@ -59,7 +64,7 @@ export default function App(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [clientKind]);
 
   const runUpdateCheck = async (opts?: { silent?: boolean }): Promise<void> => {
     setUpdateBusy(true);
@@ -132,7 +137,7 @@ export default function App(): JSX.Element {
   };
 
   const updateBanner =
-    updateReadyVersion || updateInfo ? (
+    !isMobile && (updateReadyVersion || updateInfo) ? (
       <div className="card">
         {updateInfo ? <p className="sub">{updateInfo}</p> : null}
         {updateReadyVersion ? (
@@ -150,7 +155,7 @@ export default function App(): JSX.Element {
       </div>
     ) : null;
 
-  const updateCheckButton = (
+  const updateCheckButton = isMobile ? null : (
     <div className="row">
       <button
         className="secondary"
@@ -277,7 +282,11 @@ export default function App(): JSX.Element {
       <div className="top">
         <div>
           <h1>{name}</h1>
-          <p className="sub">Idle timeout {state.idleTimeoutMinutes} min · OS-wide</p>
+          <p className="sub">
+            {isMobile
+              ? "Check in, breaks, and meetings"
+              : `Idle timeout ${state.idleTimeoutMinutes} min · OS-wide`}
+          </p>
         </div>
         <button
           className="secondary"
@@ -309,14 +318,19 @@ export default function App(): JSX.Element {
         </div>
         <div className="clock">{formatDuration(elapsed)}</div>
         <p className="sub">
-          System idle {Math.floor(state.idleSeconds / 60)}m {state.idleSeconds % 60}s
-          {state.pendingCount ? ` · ${state.pendingCount} queued interval(s)` : ""}
+          {isMobile
+            ? state.pendingCount
+              ? `${state.pendingCount} queued update(s)`
+              : "Hours sync with the ERP"
+            : `System idle ${Math.floor(state.idleSeconds / 60)}m ${state.idleSeconds % 60}s${
+                state.pendingCount ? ` · ${state.pendingCount} queued interval(s)` : ""
+              }`}
         </p>
         {state.lastError ? <p className="error">{state.lastError}</p> : null}
         {formError ? <p className="error">{formError}</p> : null}
       </div>
 
-      {checkedIn && !currentBreak && !currentMeeting ? (
+      {!isMobile && checkedIn && !currentBreak && !currentMeeting ? (
         <div className="card">
           {state.monitoringError ? (
             <p className="error">{state.monitoringError}</p>

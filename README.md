@@ -40,6 +40,23 @@ First check-in usually triggers the OS prompts.
 - If Defender or another AV flags the global input hook (`rdev`), allow the app.
 - Build: `npm run tauri build` on a Windows machine (or CI). NSIS installer is enabled in `src-tauri/tauri.conf.json`.
 
+## Android (tracker only)
+
+The phone app is attendance: sign-in, check-in/out, break, meeting, and offline sync. It does not capture screenshots, idle time, or which app is in front.
+
+Needs JDK 17, Android SDK platform 36, and NDK `29.0.13846066` (the version Tauri 2.11 looks up). From this folder:
+
+```bash
+export JAVA_HOME="/path/to/jdk-17"   # JDK 17
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+export NDK_HOME="$ANDROID_HOME/ndk/29.0.13846066"
+npm run android:init    # once
+npm run android:dev     # emulator or a plugged-in phone
+npm run android:build   # release APK
+```
+
+The install id is `com.leapsofts.tracker`. Desktop stays `com.leapsofts.erp`.
+
 ## Linux
 
 - Prefer **X11**. Screenshots, idle, and global input are best-effort on **Wayland** (same caveat as the Electron tracker).

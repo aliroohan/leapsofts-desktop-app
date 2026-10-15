@@ -1,26 +1,45 @@
+mod activity;
+#[cfg(desktop)]
 mod active_window;
 mod api;
+#[cfg(desktop)]
 mod app_usage;
+#[cfg(desktop)]
 mod browser_url;
+#[cfg(desktop)]
 mod input;
 mod queue;
+#[cfg(desktop)]
 mod screenshots;
 mod session;
 mod state;
+#[cfg(desktop)]
 mod tray;
 mod types;
+#[cfg(desktop)]
 mod url_sanitize;
 
 use api::Api;
 use queue::open_db;
 use state::Hub;
 use tauri::Manager;
+#[cfg(desktop)]
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
+#[cfg(desktop)]
 const ERP_URL: &str = match option_env!("ERP_URL") {
     Some(url) => url,
     None => "https://erp.leapsofts.com/projects",
 };
+
+#[tauri::command]
+fn client_kind() -> &'static str {
+    if cfg!(mobile) {
+        "mobile"
+    } else {
+        "desktop"
+    }
+}
 
 #[tauri::command]
 fn get_state(app: tauri::AppHandle) -> types::TrackerState {
@@ -110,6 +129,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
+            client_kind,
             get_state,
             login,
             verify_2fa,
@@ -139,19 +159,24 @@ pub fn run() {
             app.manage(api);
             app.manage(Hub::new());
 
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::External(ERP_URL.parse().unwrap()))
-                .title("Leapsofts ERP")
-                .inner_size(1280.0, 800.0)
-                .min_inner_size(800.0, 600.0)
-                .build()?;
+            // Desktop: ERP site plus the tracker overlay. Android: tracker only,
+            // created from tauri.android.conf.json.
+            #[cfg(desktop)]
+            {
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::External(ERP_URL.parse().unwrap()))
+                    .title("Leapsofts ERP")
+                    .inner_size(1280.0, 800.0)
+                    .min_inner_size(800.0, 600.0)
+                    .build()?;
 
-            WebviewWindowBuilder::new(app, "tracker", WebviewUrl::App("index.html".into()))
-                .title("Leapsofts Time Tracker")
-                .inner_size(400.0, 580.0)
-                .min_inner_size(360.0, 480.0)
-                .build()?;
+                WebviewWindowBuilder::new(app, "tracker", WebviewUrl::App("index.html".into()))
+                    .title("Leapsofts Time Tracker")
+                    .inner_size(400.0, 580.0)
+                    .min_inner_size(360.0, 480.0)
+                    .build()?;
 
-            tray::setup(&handle)?;
+                tray::setup(&handle)?;
+            }
 
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -170,10 +195,14 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Desktop close hides to the tray. Android should leave the app.
+            #[cfg(desktop)]
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
             }
+            #[cfg(not(desktop))]
+            let _ = (window, event);
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

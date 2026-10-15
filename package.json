@@ -1,7 +1,7 @@
 {
   "name": "leapsofts-erp-app",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Leapsofts ERP desktop (Tauri) with time tracker overlay",
   "author": "aliroohan321@gmail.com",
   "type": "module",
@@ -9,7 +9,10 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "android:init": "tauri android init --ci",
+    "android:dev": "tauri android dev",
+    "android:build": "tauri android build --apk"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

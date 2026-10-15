@@ -1,3 +1,5 @@
+#![cfg_attr(not(desktop), allow(dead_code))]
+
 use crate::queue;
 use crate::types::{AppUsageSegment, Shift, TrackerUser};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, COOKIE, SET_COOKIE};
@@ -72,14 +74,18 @@ impl Api {
         if let Ok(db) = self.db.lock() {
             queue::kv_set(&db, "access_token", token);
         }
-        let _ = keyring::Entry::new("com.leapsofts.erp", "access_token")
-            .and_then(|e| e.set_password(token));
+        #[cfg(desktop)]
+        {
+            let _ = keyring::Entry::new("com.leapsofts.erp", "access_token")
+                .and_then(|e| e.set_password(token));
+        }
     }
 
     pub fn load_token_bootstrap(&self) {
         if self.token().is_some() {
             return;
         }
+        #[cfg(desktop)]
         if let Ok(entry) = keyring::Entry::new("com.leapsofts.erp", "access_token") {
             if let Ok(pw) = entry.get_password() {
                 if !pw.is_empty() {
@@ -94,7 +100,11 @@ impl Api {
             queue::kv_del(&db, "access_token");
             queue::kv_del(&db, "refresh_cookie");
         }
-        let _ = keyring::Entry::new("com.leapsofts.erp", "access_token").and_then(|e| e.delete_credential());
+        #[cfg(desktop)]
+        {
+            let _ = keyring::Entry::new("com.leapsofts.erp", "access_token")
+                .and_then(|e| e.delete_credential());
+        }
     }
 
     fn store_refresh_from_headers(&self, headers: &HeaderMap) {

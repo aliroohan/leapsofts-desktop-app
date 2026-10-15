@@ -5,8 +5,9 @@ fn main() {
 
     // screencapturekit / Swift concurrency load @rpath/libswift_Concurrency.dylib.
     // Without LC_RPATH the Intel app crashes at launch (DYLD, library missing).
-    #[cfg(target_os = "macos")]
-    {
+    // cfg(target_os) here is the build machine, so check the app target instead.
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os == "macos" {
         println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
         println!("cargo:rustc-link-arg=-L/usr/lib/swift");
         println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");

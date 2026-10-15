@@ -1,3 +1,5 @@
+#![cfg_attr(not(desktop), allow(dead_code))]
+
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_IDLE_TIMEOUT_MINUTES: u32 = 5;

@@ -1,7 +1,8 @@
+#![cfg_attr(not(desktop), allow(dead_code))]
+
+use crate::activity;
 use crate::api::{is_online, Api, ApiError, PasswordLogin};
-use crate::app_usage;
 use crate::queue;
-use crate::screenshots;
 use crate::state::Hub;
 use crate::types::{has_open_meeting, is_checked_in, open_break_source, Shift};
 use tauri::{AppHandle, Manager};
@@ -15,15 +16,15 @@ pub fn sync_monitors(app: &AppHandle) {
     let shots = st.user.as_ref().map(|u| u.wants_screenshots()).unwrap_or(true);
     let usage = st.user.as_ref().map(|u| u.wants_app_usage()).unwrap_or(true);
     if should && shots {
-        screenshots::start(app.clone());
+        activity::start_screenshots(app.clone());
     } else {
-        screenshots::stop();
+        activity::stop_screenshots();
         hub.patch(app, |s| s.monitoring_active = false);
     }
     if should && usage {
-        app_usage::start(app.clone());
+        activity::start_usage(app.clone());
     } else {
-        app_usage::stop(app);
+        activity::stop_usage(app);
     }
 }
 
@@ -277,7 +278,7 @@ fn app_data_dir(app: &AppHandle) -> std::path::PathBuf {
 }
 
 pub async fn close_open_and_flush(app: &AppHandle) {
-    app_usage::close_open_usage_segment(app);
+    activity::close_usage(app);
     if let Some(api) = app.try_state::<Api>() {
         if let Ok(db) = api.db.lock() {
             queue::close_open_intervals(&db, &chrono::Utc::now().to_rfc3339());
@@ -288,8 +289,8 @@ pub async fn close_open_and_flush(app: &AppHandle) {
     }
     flush_pending_heartbeats(app, false).await;
     flush_pending_breaks(app).await;
-    let _ = screenshots::flush_pending(app).await;
-    let _ = app_usage::flush_pending(app).await;
+    activity::flush_screenshots(app).await;
+    activity::flush_usage(app).await;
 }
 
 pub async fn on_app_quit(app: &AppHandle) {
@@ -312,8 +313,8 @@ pub async fn bootstrap_session(app: &AppHandle) {
     let has_token = api.db.lock().ok().and_then(|db| queue::kv_get(&db, "access_token"));
     if has_token.is_none() {
         app.state::<Hub>().reset(app);
-        screenshots::stop();
-        app_usage::stop(app);
+        activity::stop_screenshots();
+        activity::stop_usage(app);
         return;
     }
     match refresh_profile_and_shift(app).await {
@@ -371,8 +372,8 @@ pub async fn verify_two_factor(app: &AppHandle, temp_token: String, code: String
 }
 
 pub async fn logout(app: &AppHandle) -> Result<(), String> {
-    screenshots::stop();
-    app_usage::stop(app);
+    activity::stop_screenshots();
+    activity::stop_usage(app);
     app.state::<Api>().logout_remote().await;
     app.state::<Hub>().reset(app);
     Ok(())
@@ -396,11 +397,11 @@ pub async fn user_check_in(app: &AppHandle) -> Result<(), String> {
 }
 
 pub async fn user_check_out(app: &AppHandle) -> Result<(), String> {
-    app_usage::close_open_usage_segment(app);
+    activity::close_usage(app);
     flush_pending_heartbeats(app, false).await;
     flush_pending_breaks(app).await;
-    let _ = screenshots::flush_pending(app).await;
-    let _ = app_usage::flush_pending(app).await;
+    activity::flush_screenshots(app).await;
+    activity::flush_usage(app).await;
     let _busy = ShiftBusyGuard::enter();
     let Some(shift) =
         finish_shift_mutation(app, app.state::<Api>().check_out().await).await?
@@ -420,9 +421,9 @@ pub async fn user_check_out(app: &AppHandle) -> Result<(), String> {
 }
 
 pub async fn user_start_break(app: &AppHandle) -> Result<(), String> {
-    app_usage::close_open_usage_segment(app);
-    let _ = screenshots::flush_pending(app).await;
-    let _ = app_usage::flush_pending(app).await;
+    activity::close_usage(app);
+    activity::flush_screenshots(app).await;
+    activity::flush_usage(app).await;
     let _busy = ShiftBusyGuard::enter();
     let Some(shift) =
         finish_shift_mutation(app, app.state::<Api>().start_break("manual").await).await?
@@ -467,6 +468,7 @@ pub async fn user_end_meeting(app: &AppHandle) -> Result<(), String> {
 static IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static SHIFT_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static REFRESH_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(desktop)]
 static ACTIVITY_STREAK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 pub async fn on_idle_tick(app: &AppHandle) {
@@ -478,25 +480,29 @@ pub async fn on_idle_tick(app: &AppHandle) {
     }
     maybe_log_and_flush_heartbeat(app, online).await;
 
-    let idle_seconds = user_idle::UserIdle::get_time()
-        .map(|t| t.as_seconds())
-        .unwrap_or(0);
-    app.state::<Hub>().patch(app, |s| s.idle_seconds = idle_seconds);
+    // Idle breaks need OS idle time. Android has no equivalent, so the phone
+    // only sends heartbeats and refreshes the shift.
+    #[cfg(desktop)]
+    {
+        let idle_seconds = activity::system_idle_seconds();
+        app.state::<Hub>().patch(app, |s| s.idle_seconds = idle_seconds);
 
-    if idle_seconds < 3 {
-        ACTIVITY_STREAK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    } else {
-        ACTIVITY_STREAK.store(0, std::sync::atomic::Ordering::Relaxed);
-    }
+        if idle_seconds < 3 {
+            ACTIVITY_STREAK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        } else {
+            ACTIVITY_STREAK.store(0, std::sync::atomic::Ordering::Relaxed);
+        }
 
-    if ACTIVITY_STREAK.load(std::sync::atomic::Ordering::Relaxed) >= 3 {
-        maybe_end_idle_break(app).await;
-    } else {
-        maybe_start_idle_break(app, idle_seconds).await;
+        if ACTIVITY_STREAK.load(std::sync::atomic::Ordering::Relaxed) >= 3 {
+            maybe_end_idle_break(app).await;
+        } else {
+            maybe_start_idle_break(app, idle_seconds).await;
+        }
     }
     maybe_refresh_shift_from_server(app).await;
 }
 
+#[cfg(desktop)]
 async fn maybe_start_idle_break(app: &AppHandle, idle_seconds: u64) {
     let st = app.state::<Hub>().get(app);
     if !st.is_authenticated || !st.is_online || !is_checked_in(&st.shift) {
@@ -549,6 +555,7 @@ async fn maybe_start_idle_break(app: &AppHandle, idle_seconds: u64) {
     IN_FLIGHT.store(false, std::sync::atomic::Ordering::SeqCst);
 }
 
+#[cfg(desktop)]
 async fn maybe_end_idle_break(app: &AppHandle) {
     let st = app.state::<Hub>().get(app);
     if !st.is_online || open_break_source(&st.shift).as_deref() != Some("idle") {
@@ -581,6 +588,7 @@ async fn maybe_end_idle_break(app: &AppHandle) {
 }
 
 use std::time::Instant;
+#[cfg(desktop)]
 static LAST_TICK: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
 static LAST_HEARTBEAT: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
 static LAST_SHIFT_REFRESH: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
@@ -676,18 +684,22 @@ async fn maybe_log_and_flush_heartbeat(app: &AppHandle, online: bool) {
 }
 
 pub async fn on_idle_tick_with_sleep_gap(app: &AppHandle) {
-    let now = Instant::now();
-    let slept = {
-        let mut last = LAST_TICK.lock().unwrap();
-        let slept = last
-            .map(|prev| now.duration_since(prev).as_secs() > 30)
-            .unwrap_or(false);
-        *last = Some(now);
-        slept
-    };
-    if slept {
-        record_sleep_or_offline_start(app);
-        close_open_and_flush(app).await;
+    // A phone pauses this loop whenever the app is backgrounded. That is not sleep.
+    #[cfg(desktop)]
+    {
+        let now = Instant::now();
+        let slept = {
+            let mut last = LAST_TICK.lock().unwrap();
+            let slept = last
+                .map(|prev| now.duration_since(prev).as_secs() > 30)
+                .unwrap_or(false);
+            *last = Some(now);
+            slept
+        };
+        if slept {
+            record_sleep_or_offline_start(app);
+            close_open_and_flush(app).await;
+        }
     }
     on_idle_tick(app).await;
 }
