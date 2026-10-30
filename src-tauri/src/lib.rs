@@ -18,6 +18,8 @@ mod tray;
 mod types;
 #[cfg(desktop)]
 mod url_sanitize;
+#[cfg(desktop)]
+mod erp_webview;
 
 use api::Api;
 use queue::open_db;
@@ -27,7 +29,7 @@ use tauri::Manager;
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 #[cfg(desktop)]
-const ERP_URL: &str = match option_env!("ERP_URL") {
+pub(crate) const ERP_URL: &str = match option_env!("ERP_URL") {
     Some(url) => url,
     None => "https://erp.leapsofts.com/projects",
 };
@@ -163,11 +165,14 @@ pub fn run() {
             // created from tauri.android.conf.json.
             #[cfg(desktop)]
             {
-                WebviewWindowBuilder::new(app, "main", WebviewUrl::External(ERP_URL.parse().unwrap()))
-                    .title("Leapsofts ERP")
-                    .inner_size(1280.0, 800.0)
-                    .min_inner_size(800.0, 600.0)
-                    .build()?;
+                erp_webview::configure_erp_webview(
+                    app.handle(),
+                    WebviewWindowBuilder::new(app, "main", WebviewUrl::External(ERP_URL.parse().unwrap()))
+                        .title("Leapsofts ERP")
+                        .inner_size(1280.0, 800.0)
+                        .min_inner_size(800.0, 600.0),
+                )
+                .build()?;
 
                 WebviewWindowBuilder::new(app, "tracker", WebviewUrl::App("index.html".into()))
                     .title("Leapsofts Time Tracker")
