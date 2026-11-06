@@ -67,8 +67,11 @@ The install id is `com.leapsofts.tracker`. Desktop stays `com.leapsofts.erp`.
 
 `VITE_API_URL` / `API_BASE` default to the same Heroku `/api/v1` URL as `leapsofts-erp-desktop-app/.env`. Overlay auth is JWT + `refreshToken` cookie stored locally (SQLite + keyring when available). The ERP webview uses its own site cookies.
 
+## Auto-update
+
+The desktop build includes the **Tauri updater** plugin (`src/updater.ts`, check on launch in `src/App.tsx`; endpoints and pubkey in `src-tauri/tauri.conf.json`). For production you still need a proper release pipeline, hosted update artifacts, and **code signing** where your OS/store requires it.
+
 ## Out of scope (v1)
 
-- Auto-update / code signing
 - Replacing the Electron app
 - Browser-extension URL tracking (OS active window only; hostname sanitized when a URL is present in the title)
